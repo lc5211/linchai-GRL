@@ -115,7 +115,7 @@ MAX_GRAD_NORM = 1.0
 INTERMEDIATE_CKPT_DIR = "/home/vanitas/lmgame_projects/GRL/content/intermediate_ckpt/"
 CKPT_DIR = "/home/vanitas/lmgame_projects/GRL/content/ckpts/"
 SAVE_INTERVAL_STEPS = 500
-MAX_TO_KEEP = 4
+MAX_TO_KEEP = 1
 
 # Inference presets (optional)
 GENERATION_CONFIGS = {

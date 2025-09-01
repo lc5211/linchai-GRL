@@ -204,9 +204,17 @@ class MultiTurnPpoLearner(PpoLearner):
           pad_id=pad_value,
           eos_id=eos_value,
       )
+      # Align mask sharding with ref_per_token_logps
+      _cm_for_ref = completion_mask
+      try:
+        if hasattr(ref_per_token_logps, "sharding") and ref_per_token_logps.sharding is not None:
+          if (not hasattr(_cm_for_ref, "sharding")) or (_cm_for_ref.sharding != ref_per_token_logps.sharding):
+            _cm_for_ref = jax.device_put(_cm_for_ref, ref_per_token_logps.sharding)
+      except Exception:
+        pass
       # Set log probs to 1 for padding tokens.
       ref_per_token_logps = jnp.where(
-          completion_mask,
+          _cm_for_ref,
           ref_per_token_logps,
           jnp.array(1).astype(ref_per_token_logps.dtype),
       )
@@ -223,8 +231,15 @@ class MultiTurnPpoLearner(PpoLearner):
         completion_tokens=completion_ids,
     )
     # Set log probs to 1 for padding tokens.
+    _cm_for_old = completion_mask
+    try:
+      if hasattr(old_per_token_logps, "sharding") and old_per_token_logps.sharding is not None:
+        if (not hasattr(_cm_for_old, "sharding")) or (_cm_for_old.sharding != old_per_token_logps.sharding):
+          _cm_for_old = jax.device_put(_cm_for_old, old_per_token_logps.sharding)
+    except Exception:
+      pass
     old_per_token_logps = jnp.where(
-        completion_mask,
+        _cm_for_old,
         old_per_token_logps,
         jnp.array(1).astype(old_per_token_logps.dtype),
     )
@@ -240,8 +255,15 @@ class MultiTurnPpoLearner(PpoLearner):
     # `values` start from the last *prompt* token. Shape: `[B, T]`.
     values = values[:, -logits_to_keep - 1 : -1]
     # Set `values` corresponding to padding tokens to 0.
+    _cpm_for_values = completion_plus_one_mask
+    try:
+      if hasattr(values, "sharding") and values.sharding is not None:
+        if (not hasattr(_cpm_for_values, "sharding")) or (_cpm_for_values.sharding != values.sharding):
+          _cpm_for_values = jax.device_put(_cpm_for_values, values.sharding)
+    except Exception:
+      pass
     values = jnp.where(
-        completion_plus_one_mask,
+        _cpm_for_values,
         values,
         jnp.array(0).astype(values.dtype),
     )
@@ -342,8 +364,15 @@ class MultiTurnPpoLearner(PpoLearner):
     )
     if self.ppo_config.beta != 0.0:
       # Average of the per-sequence mean KL
+      _cm_for_kl = completion_mask
+      try:
+        if hasattr(kl, "sharding") and kl.sharding is not None:
+          if (not hasattr(_cm_for_kl, "sharding")) or (_cm_for_kl.sharding != kl.sharding):
+            _cm_for_kl = jax.device_put(_cm_for_kl, kl.sharding)
+      except Exception:
+        pass
       per_sequence_mean_kl = ppo_helpers.masked_mean(
-          kl, completion_mask, axis=-1  # pylint: disable=undefined-variable
+          kl, _cm_for_kl, axis=-1  # pylint: disable=undefined-variable
       )
       self._actor_metrics_logger.log(
           "kl/mean", per_sequence_mean_kl.mean(), mode, step
@@ -387,8 +416,32 @@ class MultiTurnPpoLearner(PpoLearner):
         gamma=self.ppo_config.gamma,
         gae_lambda=self.ppo_config.gae_lambda,
     )
-    # Normalize advantages.
-    advantages = ppo_helpers.normalize_advantages(advantages, completion_mask)
+    # Normalize advantages on host to avoid JAX pytree metadata/sharding issues.
+    try:
+      _adv_np = np.asarray(advantages, dtype=np.float32)
+      _mask_np = np.asarray(completion_mask, dtype=bool)
+      _mask_sum = _mask_np.sum()
+      if _mask_sum <= 0:
+        _norm_adv_np = np.zeros_like(_adv_np, dtype=np.float32)
+      else:
+        _mean = (_adv_np * _mask_np).sum() / _mask_sum
+        _var = (((_adv_np - _mean) ** 2) * _mask_np).sum() / _mask_sum
+        # Bessel correction
+        if _mask_sum > 1:
+          _var = _var * (_mask_sum / (_mask_sum - 1))
+        _norm_adv_np = (_adv_np - _mean) / np.sqrt(_var + 1e-8)
+        _norm_adv_np = np.where(_mask_np, _norm_adv_np, 0.0)
+      _norm_adv = jnp.asarray(_norm_adv_np, dtype=advantages.dtype)
+      # Place back on the same sharding as `advantages` if present
+      try:
+        if hasattr(advantages, "sharding") and advantages.sharding is not None:
+          _norm_adv = jax.device_put(_norm_adv, advantages.sharding)
+      except Exception:
+        pass
+      advantages = _norm_adv
+    except Exception:
+      # Fallback to original JAX path if host normalization fails
+      advantages = ppo_helpers.normalize_advantages(advantages, completion_mask)
 
     return TrainExample(
         prompt_ids=prompt_ids,
