@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grl-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grl
+  template:
+    metadata:
+      labels:
+        app: grl
+    spec:
+      containers:
+      - name: grl-container
+        image: us-central1-docker.pkg.dev/YOUR_PROJECT_ID/grl-images/grl-image:latest
+        # Keep the container running
+        command: ["/bin/bash", "-c", "sleep infinity"]
+        envFrom:
+        - secretRef:
+            name: grl-secrets
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
