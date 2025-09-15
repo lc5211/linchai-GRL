@@ -30,7 +30,7 @@ COPY . .
 
 # Install submodules and their dependencies
 RUN chmod +x scripts/install_submodules.sh
-RUN ./scripts/install_submodules.sh --all
+RUN ./scripts/install_submodules.sh --tunix
 
 # Install Python dependencies
 # As per README.md, install specific versions of torch and flash-attn

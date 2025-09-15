@@ -1,10 +1,10 @@
-# This scripts takes a docker image that already contains the Tunix dependencies, copies the local source code in and
+# This scripts takes a docker image that already contains the GRL dependencies, copies the local source code in and
 # uploads that image into GCR. Once in GCR the docker image can be used for development.
 
 # Each time you update the base image via a "bash docker_build_dependency_image.sh", there will be a slow upload process
 # (minutes). However, if you are simply changing local code and not updating dependencies, uploading just takes a few seconds.
 
-# Script to buid a Tunix base image locally, example cmd is:
+# Script to buid a GRL base image locally, example cmd is:
 # bash docker_build_dependency_image.sh
 # bash docker_build_dependency_image.sh --vllm
 set -e
@@ -25,7 +25,7 @@ DOCKERFILE=./Dockerfile
 BUILD_ARGS=""
 
 if [[ "$VLLM_INSTALL" == "true" ]]; then
-    export LOCAL_IMAGE_NAME=tunix_vllm_image
+    export LOCAL_IMAGE_NAME=grl_vllm_image
     BUILD_ARGS="--build-arg INSTALL_VLLM=true"
     echo "Building image with vLLM support: $LOCAL_IMAGE_NAME"
 else
@@ -47,7 +47,7 @@ build_ai_image() {
         exit 1
     fi
     COMMIT_HASH=$(git rev-parse --short HEAD)
-    echo "Building Tunix Image at commit hash ${COMMIT_HASH}..."
+    echo "Building GRL Image at commit hash ${COMMIT_HASH}..."
 
     sudo docker build \
         --network=host \
@@ -68,6 +68,6 @@ docker image locally with full TPU access, use the following command:"
 echo ""
 echo 'sudo docker run -it --rm --net=host --ipc=host --ulimit memlock=-1:-1 -v "$(pwd)":/app --workdir /app --device=/dev/vfio/0 --device=/dev/vfio/1 --device=/dev/vfio/2 --device=/dev/vfio/3 --device=/dev/vfio/4 --device=/dev/vfio/5 --device=/dev/vfio/6 --device=/dev/vfio/7 --device=/dev/vfio/vfio ${LOCAL_IMAGE_NAME} bash'
 echo ""
-echo "You can run tunix and your development tests inside of the docker image. Changes to your workspace will automatically
+echo "You can run grl and your development tests inside of the docker image. Changes to your workspace will automatically
 be reflected inside the docker container."
 echo "Once you want you upload your docker container to GCR, take a look at docker_upload_runner.sh"
