@@ -51,6 +51,14 @@ from jax_smi import initialise_tracking
 
 initialise_tracking()
 
+try:
+  wandb.login(key="your-wandb-key")
+  print("linchai: logged in to W&B")
+except wandb.errors.UsageError as e:
+  print(f"Failed to log in to W&B: {e}")
+  # Handle the error, maybe disable W&B logging
+  wandb.init(mode="disabled")
+
 # ======================= Configuration =======================
 
 # Load Tunix base config for hyperparameters (relative paths)
@@ -62,8 +70,7 @@ ENTROPY_COEFF = float(tunix_cfg.ppo.entropy_coeff)
 ENTROPY_AGGS_MODE = str(tunix_cfg.ppo.aggs_mode)
 
 # --- Model artifacts / data ---
-# MODEL_CP_PATH = str(BASE_DIR / "qwen_models")
-MODEL_CP_PATH = "gs://linchai-bucket-dev/grl/qwen_models"
+MODEL_CP_PATH = str(BASE_DIR / "qwen_models")
 repo_id = str(tunix_cfg.model.repo_id)
 TRAIN_DATA_DIR = None
 TEST_DATA_DIR = None
@@ -160,15 +167,12 @@ WEIGHT_DECAY = float(tunix_cfg.training.weight_decay)
 MAX_GRAD_NORM = float(tunix_cfg.training.max_grad_norm)
 
 # Checkpointing (compose absolute paths from repo root; allow env overrides)
-# RUN_ROOT = (BASE_DIR / "content").resolve()
-RUN_ROOT = "gs://linchai-bucket-dev/grl/content"
-_default_intermediate = (RUN_ROOT / "intermediate_ckpt").resolve()
+RUN_ROOT = (BASE_DIR / "content").resolve()
 _default_ckpts = (RUN_ROOT / "ckpts").resolve()
-INTERMEDIATE_CKPT_DIR = os.environ.get("GRL_INTERMEDIATE_CKPT_DIR", str(_default_intermediate))
 CKPT_DIR = os.environ.get("GRL_CKPT_DIR", str(_default_ckpts))
 SAVE_INTERVAL_STEPS = int(tunix_cfg.training.save_interval_steps)
 MAX_TO_KEEP = int(tunix_cfg.training.max_to_keep)
-print("Checkpoint dirs:", {"intermediate": INTERMEDIATE_CKPT_DIR, "ckpts": CKPT_DIR})
+print("Checkpoint dirs:", CKPT_DIR)
 
 # Inference presets removed for brevity
 
@@ -276,7 +280,6 @@ def _print_config_summary():
       'model': { 'repo_id': repo_id },
       'paths': {
         'ckpt_dir': CKPT_DIR,
-        'intermediate_ckpt_dir': INTERMEDIATE_CKPT_DIR,
       }
   })
 
@@ -288,6 +291,7 @@ _print_config_summary()
 
 def download_model_weights(repo_id: str, local_dir: str) -> str:
   """Download model weights and tokenizer assets; return the resolved path."""
+  print("Downloading model weights and tokenizer from HF Hub...")
   downloaded = snapshot_download(
       repo_id=repo_id,
       local_dir=local_dir,
@@ -304,46 +308,12 @@ def download_model_weights(repo_id: str, local_dir: str) -> str:
   return str(downloaded)
 
 
-def load_qwen2_from_safetensors(model_dir: str, model_config) -> nnx.Module:
+def load_qwen2_from_safetensors(model_dir: str, model_config, mesh) -> nnx.Module:
   """Load Qwen2 from local safetensors directory."""
+  print("Loading Qwen2 model from safetensors in", model_dir)
   if list(epath.Path(model_dir).expanduser().glob("*.safetensors")):
-    return params.create_model_from_safe_tensors(model_dir, model_config)
+    return params.create_model_from_safe_tensors(model_dir, model_config, mesh)
   raise ValueError(f"No safetensors found in {model_dir}")
-
-
-def save_intermediate_state(module: nnx.Module, save_dir: str) -> None:
-  """Save an intermediate nnx state checkpoint once if it doesn't exist."""
-  checkpointer = ocp.StandardCheckpointer()
-  _, state = nnx.split(module)
-  checkpoint_path = os.path.join(Path(save_dir), "state")
-  if not os.path.exists(checkpoint_path):
-    checkpointer.save(checkpoint_path, state)
-    # Ensure filesystem settles before continuing (matches original behavior)
-    time.sleep(60)
-
-
-def build_reference_model_from_ckpt(ckpt_path: str):
-  """Restore reference model and return (model, mesh, model_config)."""
-  mesh = jax.make_mesh(*MESH)
-  model_config = model.ModelConfig.qwen2_5_0_5_b()
-  print("linchai: using mesh: ", mesh)
-  print("linchai: get model config")
-  abs_qwen2: nnx.Module = nnx.eval_shape(
-      lambda: model.Qwen2(model_config, rngs=nnx.Rngs(params=0))
-  )
-  abs_state = nnx.state(abs_qwen2)
-  abs_state = jax.tree.map(
-      lambda a, s: jax.ShapeDtypeStruct(a.shape, jnp.float32, sharding=s),
-      abs_state,
-      nnx.get_named_sharding(abs_state, mesh),
-  )
-  checkpointer = ocp.StandardCheckpointer()
-  restored_params = checkpointer.restore(ckpt_path, target=abs_state)
-  print("linchai: restored params from ", ckpt_path)
-
-  graph_def, _ = nnx.split(abs_qwen2)
-  qwen2_ref = nnx.merge(graph_def, restored_params)
-  return qwen2_ref, mesh, model_config
 
 
 def clone_module_like(src_module: nnx.Module, model_config, mesh) -> nnx.Module:
@@ -365,20 +335,18 @@ def clone_module_like(src_module: nnx.Module, model_config, mesh) -> nnx.Module:
   return nnx.merge(gdef, src_state)
 
 
-# 1) Download weights and load base model, then save an intermediate state
+# 1) Download weights and load base model
 model_config = model.ModelConfig.qwen2_5_0_5_b()
 model_dir = download_model_weights(repo_id, MODEL_CP_PATH)
-qwen2 = load_qwen2_from_safetensors(model_dir, model_config)
-save_intermediate_state(qwen2, INTERMEDIATE_CKPT_DIR)
-del qwen2
-gc.collect()
+mesh = jax.make_mesh(*MESH)
+qwen2_ref = load_qwen2_from_safetensors(model_dir, model_config, mesh)
+nnx.display(qwen2_ref)
+print("linchai: loaded qwen2 from safetensors")
+
 
 # 2) Build reference/policy and critic models
-qwen2_ref, mesh, model_config = build_reference_model_from_ckpt(
-    os.path.join(Path(INTERMEDIATE_CKPT_DIR), "state")
-)
-policy_qwen2 = clone_module_like(qwen2_ref, model_config, mesh)
-tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
+policy_qwen2 = clone_module_like(qwen2_ref, model_config, mesh) # policy is the actor
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
 if tokenizer.pad_token_id is None:
   tokenizer.pad_token = tokenizer.eos_token
 # TODO: Maybe padding issue in trainer

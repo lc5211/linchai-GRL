@@ -26,6 +26,7 @@ RUN pip install --upgrade pip
 
 RUN pip install git+https://github.com/ayaka14732/jax-smi.git
 RUN pip install git+https://github.com/AI-Hypercomputer/pathways-utils.git
+RUN pip install gcsfs
 
 # Set the working directory
 WORKDIR /app

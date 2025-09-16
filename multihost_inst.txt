@@ -1,0 +1,40 @@
+# install xpk from source
+# install xpk prerequisites following https://github.com/AI-Hypercomputer/xpk?tab=readme-ov-file#prerequisites
+git clone https://github.com/AI-Hypercomputer/xpk.git
+cd xpk
+make install
+echo "alias xpk='python3 ~/xpk/xpk.py'" >> ~/.bashrc
+source ~/.bashrc
+
+# Alternatively, install from pip with specific version e.g.
+pip install xpk=0.10.1
+
+# Build local docker image
+# cleanup unused docker images and caches if disk is not enough
+sudo docker system prune
+
+bash docker_build_dependency_image.sh
+# It will default to generate a local docker image
+export LOCAL_IMAGE_NAME=grl_base_image
+
+
+# install gcloud beta commands
+gcloud components install beta
+
+# create xpk cluster
+export CLUSTER_NAME='linchai-v5p-16'
+export ZONE='europe-west4-b'
+export TPU_TYPE='v5p-16'
+export CLUSTER_CPU_MACHINE_TYPE=n2d-standard-32
+export PROJECT='your-project-id'
+
+NETWORK_NAME=${CLUSTER_NAME}-mtu9k-wx
+NETWORK_FW_NAME=${NETWORK_NAME}-fw-wx
+export CLUSTER_ARGUMENTS="--network=${NETWORK_NAME} --subnetwork=${NETWORK_NAME}"
+gcloud compute networks create ${NETWORK_NAME} --mtu=8896 --project=${PROJECT} --subnet-mode=auto --bgp-routing-mode=regional
+gcloud compute firewall-rules create ${NETWORK_FW_NAME} --network ${NETWORK_NAME} --allow tcp,icmp,udp --project=${PROJECT}
+
+xpk cluster create-pathways --cluster $CLUSTER_NAME --cluster-cpu-machine-type=$CLUSTER_CPU_MACHINE_TYPE --num-slices=1 --tpu-type=$TPU_TYPE --zone $ZONE  --project  $PROJECT --custom-cluster-arguments="${CLUSTER_ARGUMENTS}"
+
+#submit workload
+xpk workload create-pathways --cluster=$CLUSTER_NAME --workload=$WORKLOAD_NAME --command="TPU_MIN_LOG_LEVEL=0 TF_CPP_MIN_LOG_LEVEL=0 TPU_STDERR_LOG_LEVEL=0 JAX_PLATFORMS=proxy JAX_BACKEND_TARGET=grpc://127.0.0.1:29000 ENABLE_PATHWAYS_PERSISTENCE='1' source your_script.sh" --num-slices=1 --tpu-type="v5p-16" --base-docker-image docker.io/library/grl_base_image   --priority=high
