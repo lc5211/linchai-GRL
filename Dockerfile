@@ -15,12 +15,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     maven \
     && rm -rf /var/lib/apt/lists/*
 
+
+
 # Create a virtual environment
 RUN python3.11 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Upgrade pip
 RUN pip install --upgrade pip
+
+RUN pip install git+https://github.com/ayaka14732/jax-smi.git
+RUN pip install git+https://github.com/AI-Hypercomputer/pathways-utils.git
 
 # Set the working directory
 WORKDIR /app

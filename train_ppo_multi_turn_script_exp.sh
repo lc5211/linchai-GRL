@@ -10,8 +10,8 @@ PROJECT_ROOT="$(pwd)"
 echo "Project root: $PROJECT_ROOT"
 
 # Setup logging
-mkdir -p cache
-LOG_FILE="cache/train_ppo_multi_turn_$(date +"%Y%m%d_%H%M%S").log"
+# mkdir -p cache
+LOG_FILE="gs://linchai-bucket-dev/grl/train_ppo_multi_turn_$(date +"%Y%m%d_%H%M%S").log"
 echo "Logging to: $LOG_FILE"
 
 
@@ -21,7 +21,7 @@ if [ ! -f "$PY_SCRIPT" ]; then
   exit 1
 fi
 
-python "$PY_SCRIPT" 2>&1 | tee "$LOG_FILE"
+python3 "$PY_SCRIPT" 2>&1 | tee "$LOG_FILE"
 
 echo "Training completed. Log: $LOG_FILE"
 

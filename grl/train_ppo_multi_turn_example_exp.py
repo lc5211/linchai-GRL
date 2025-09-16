@@ -34,6 +34,13 @@ from huggingface_hub import snapshot_download
 from etils import epath
 from transformers import AutoTokenizer
 
+import pathwaysutils
+import jax
+pathwaysutils.initialize()
+
+print(jax.devices())
+
+
 # Utilities and env
 import gc
 import os
@@ -55,7 +62,8 @@ ENTROPY_COEFF = float(tunix_cfg.ppo.entropy_coeff)
 ENTROPY_AGGS_MODE = str(tunix_cfg.ppo.aggs_mode)
 
 # --- Model artifacts / data ---
-MODEL_CP_PATH = str(BASE_DIR / "qwen_models")
+# MODEL_CP_PATH = str(BASE_DIR / "qwen_models")
+MODEL_CP_PATH = "gs://linchai-bucket-dev/grl/qwen_models"
 repo_id = str(tunix_cfg.model.repo_id)
 TRAIN_DATA_DIR = None
 TEST_DATA_DIR = None
@@ -152,7 +160,8 @@ WEIGHT_DECAY = float(tunix_cfg.training.weight_decay)
 MAX_GRAD_NORM = float(tunix_cfg.training.max_grad_norm)
 
 # Checkpointing (compose absolute paths from repo root; allow env overrides)
-RUN_ROOT = (BASE_DIR / "content").resolve()
+# RUN_ROOT = (BASE_DIR / "content").resolve()
+RUN_ROOT = "gs://linchai-bucket-dev/grl/content"
 _default_intermediate = (RUN_ROOT / "intermediate_ckpt").resolve()
 _default_ckpts = (RUN_ROOT / "ckpts").resolve()
 INTERMEDIATE_CKPT_DIR = os.environ.get("GRL_INTERMEDIATE_CKPT_DIR", str(_default_intermediate))
@@ -317,6 +326,8 @@ def build_reference_model_from_ckpt(ckpt_path: str):
   """Restore reference model and return (model, mesh, model_config)."""
   mesh = jax.make_mesh(*MESH)
   model_config = model.ModelConfig.qwen2_5_0_5_b()
+  print("linchai: using mesh: ", mesh)
+  print("linchai: get model config")
   abs_qwen2: nnx.Module = nnx.eval_shape(
       lambda: model.Qwen2(model_config, rngs=nnx.Rngs(params=0))
   )
@@ -328,6 +339,7 @@ def build_reference_model_from_ckpt(ckpt_path: str):
   )
   checkpointer = ocp.StandardCheckpointer()
   restored_params = checkpointer.restore(ckpt_path, target=abs_state)
+  print("linchai: restored params from ", ckpt_path)
 
   graph_def, _ = nnx.split(abs_qwen2)
   qwen2_ref = nnx.merge(graph_def, restored_params)
@@ -349,6 +361,7 @@ def clone_module_like(src_module: nnx.Module, model_config, mesh) -> nnx.Module:
     src_state = jax.tree.map(lambda x, s: jax.device_put(x, s), src_state, target_sharding)
   except Exception:
     pass
+  print("linchai: cloned module from frozen reference")
   return nnx.merge(gdef, src_state)
 
 
