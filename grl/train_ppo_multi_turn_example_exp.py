@@ -71,6 +71,7 @@ ENTROPY_AGGS_MODE = str(tunix_cfg.ppo.aggs_mode)
 
 # --- Model artifacts / data ---
 MODEL_CP_PATH = str(BASE_DIR / "qwen_models")
+# MODEL_CP_PATH = "gs://linchai-bucket-dev/grl/qwen_models"
 repo_id = str(tunix_cfg.model.repo_id)
 TRAIN_DATA_DIR = None
 TEST_DATA_DIR = None
@@ -168,6 +169,7 @@ MAX_GRAD_NORM = float(tunix_cfg.training.max_grad_norm)
 
 # Checkpointing (compose absolute paths from repo root; allow env overrides)
 RUN_ROOT = (BASE_DIR / "content").resolve()
+# RUN_ROOT = "gs://linchai-bucket-dev/grl/content"
 _default_ckpts = (RUN_ROOT / "ckpts").resolve()
 CKPT_DIR = os.environ.get("GRL_CKPT_DIR", str(_default_ckpts))
 SAVE_INTERVAL_STEPS = int(tunix_cfg.training.save_interval_steps)
@@ -312,7 +314,7 @@ def load_qwen2_from_safetensors(model_dir: str, model_config, mesh) -> nnx.Modul
   """Load Qwen2 from local safetensors directory."""
   print("Loading Qwen2 model from safetensors in", model_dir)
   if list(epath.Path(model_dir).expanduser().glob("*.safetensors")):
-    return params.create_model_from_safe_tensors(model_dir, model_config, mesh)
+    return params.create_model_from_safe_tensors(model_dir, model_config, mesh, dtype=jnp.float32)
   raise ValueError(f"No safetensors found in {model_dir}")
 
 
